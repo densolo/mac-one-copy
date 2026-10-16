@@ -47,10 +47,11 @@ object Help {
         HelpSection(
             "Sending",
             listOf(
-                "• Open Files, select files or folders (click; Cmd-click or Shift-click to select several; double-click to open a folder) and choose Send to ▸ and a Mac.",
+                "• Open Files, tick the files and folders to send (click their checkboxes; Shift-click a checkbox ticks a range; the checkbox in the header ticks everything in the folder; double-click a folder to open it) and choose Send to ▸ and a Mac.",
+                "• Everything sent together comes from one folder, so it all lands in one folder on the other Mac. Opening another folder starts a new selection; send each folder's items as their own transfer.",
                 "• Paths are relative to your home folder, so Documents/Report.xlsx lands in Documents/Report.xlsx on the other Mac even if the account names differ.",
                 "• The job waits under Transfers → In progress as \"Waiting for answer\" until the other Mac accepts. It may already send its first chunk to save time.",
-                "• Transfers lists everything in one place: incoming offers and running, paused or failed jobs under In progress, finished ones under Completed, with totals per Mac at the top.",
+                "• Transfers lists everything in one place: incoming offers and running, paused or failed jobs under In progress, finished ones under Completed, with totals per Mac at the top. A job with several items shows the first one and \"+ N more\", which lists them all.",
             ),
         ),
         HelpSection(
@@ -60,7 +61,7 @@ object Help {
                 "• Accept: files are written to the same place as on the sender. A file you already have with a different size or date is replaced; the old version is kept in the trash of mac-one-copy (Settings → trash, 14 days by default). Files that are already identical are skipped.",
                 "• Accept as copy: nothing you have is touched. Each item arrives next to the original under a new name: Report (copy).xlsx, Projects (copy), then (copy 2), (copy 3), …",
                 "• Decline: nothing is transferred and the sender is told.",
-                "Each item shows where it will go, with Accept and with Accept as copy. Change… puts it into another folder of your choice (inside your home folder, not a protected one); it keeps its name. Put everything in… moves all items at once, and Reset brings an item back to the sender's folder. The new / changed / same marks are then checked against the new place.",
+                "The dialog shows the first item (\"+ N more\" opens the full list), and under Goes to the folder everything lands in. Change… there moves everything into another folder of your choice (inside your home folder, not a protected one); items keep their names. Reset brings them back to the sender's folders. Show all files… opens every item with its own destination and its own Change… / Reset, and the folders' contents. The new / changed / same marks are always checked against where things will land.",
             ),
         ),
         HelpSection(
@@ -87,7 +88,7 @@ object Help {
                 "• Apps and other packages (.app, .photoslibrary, …) are copied as ordinary folders, with their internal links. Because signatures, permissions and extended attributes are not kept, apps may not run afterwards.",
                 "• Hard links arrive as separate copies.",
                 "• Files outside your home folder, and the macOS-protected folders below.",
-                "Anything left out or failed is listed with its job in Transfers (⚠ … not transferred), with the reason, on both Macs. Items that arrive fine after Resume drop off the list.",
+                "Anything left out or failed is listed with its job in Transfers (⚠ … not transferred), with the reason, on both Macs. Clicking it opens a window with the whole list, filters for failed and skipped items, and Copy list. Items that arrive fine after Resume drop off the list.",
             ),
         ),
         HelpSection(

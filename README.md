@@ -38,13 +38,13 @@ Both engines see the same local folder, so this test covers the File Provider be
 - **First run:** pick the relay folder inside OneDrive (the app suggests `~/Library/CloudStorage/OneDrive-*/mac-one-copy`) and give this Mac a name. Received files go under the home folder, which is `~` unless you change it in Settings.
 - **Screens:**
   - **Machines:** this Mac at the top (name, free space, home and relay folder), then each peer, online or last seen, with its free space.
-  - **Files:** a home-folder browser. Click to select, Cmd-click or Shift-click for more, double-click to open a folder. Folder sizes are computed in the background. Symlinks are shown but can't be sent. Then choose "Send to ▸ machine".
-  - **Transfers:** one list with totals per Mac at the top. **In progress** shows incoming offers first, then waiting, running, paused and failed jobs, with progress, rate, ETA, current file, and Pause, Resume and Cancel. **Completed** shows finished jobs, newest first, with their stats.
+  - **Files:** a home-folder browser with a checkbox column. Only the checkboxes select: click one to tick it, Shift-click another to tick the range between them, or use the header checkbox for the whole folder. Double-clicking a row opens the folder and never ticks it. Everything sent together comes from one folder, so opening another folder starts a new selection. Folder sizes are computed in the background. Symlinks are shown but can't be sent. Then choose "Send to ▸ machine".
+  - **Transfers:** one list with totals per Mac at the top. A job with several items shows the first one and "+ N more", which lists them all. **In progress** shows incoming offers first, then waiting, running, paused and failed jobs, with progress, rate, ETA, current file, and Pause, Resume and Cancel. **Completed** shows finished jobs, newest first, with their stats.
   - **Settings:** relay, name, home, window, chunk size, poll interval, verify from disk, trash retention, and Empty trash.
   - **Help:** how it works, sending and receiving, what can be transferred, protected folders, OneDrive notes.
 - **Incoming offer:** the Dock icon bounces and its badge counts the waiting offers. The accept dialog opens with a tree that marks each file new, changed or same, and warns if there isn't enough free space.
-  - Each item shows where it will go, both with Accept and with Accept as copy.
-  - **Change…** puts an item into a folder you pick, under the same name. **Put everything in…** moves all items, and **Reset** puts one back where the sender had it.
+  - The dialog shows the first item with "+ N more", and **Goes to** with the destination folder. **Change…** there moves everything into a folder you pick (items keep their names), and **Reset** restores the sender's folders.
+  - **Show all files…** opens every item with its own destination (Accept and as copy), its own Change… and Reset, **Put everything in…**, and the folders' contents.
   - The new / changed / same marks, and what Accept skips, are then checked against the new place.
   - The folder must be inside home and not a protected folder, and two items can't end up at the same path.
 - **There is no tray icon.** Closing the window only hides it, and the app keeps receiving. Click the Dock icon to bring the window back, or Cmd+Q to quit. The Dock menu and the window title show progress, e.g. "Studio — mac-one-copy · 2 jobs · 34%".
@@ -151,7 +151,7 @@ History is kept in `<data-dir>/history.jsonl`, one JSON line per finished job. I
   - A symlink can't be sent on its own.
   - On the receiver, links are created only after every file of the job is in place, and each target is checked again against where the folder actually lands (after a rename as a copy, or a move).
 - **Skipped:** symlinks pointing outside the folder, special files, unreadable entries, `.DS_Store`.
-- **What didn't make it:** every job keeps a list of what was skipped or failed, with the reason, on both Macs. It's shown in Transfers ("⚠ N not transferred"), kept in history, and printed by `issues JOB`. Items that arrive fine after Resume drop off the list.
+- **What didn't make it:** every job keeps a list of what was skipped or failed, with the reason, on both Macs. It's shown in Transfers: "⚠ N not transferred" opens a window with the full list, filters for failed and skipped items, and **Copy list**. It's also kept in history and printed by `issues JOB`. Items that arrive fine after Resume drop off the list.
 - **Not kept:** permissions and the executable flag, owner, creation date, Finder tags, extended attributes and resource forks. Apps and other packages arrive as plain folders (with their internal links), so apps may not run afterwards. Hard links become separate copies.
 
 ### Protected macOS folders

@@ -1,6 +1,10 @@
 package app.dc8.maconecopy.app
 
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -29,6 +33,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import androidx.compose.ui.state.ToggleableState
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -49,7 +54,7 @@ fun offer(free: Long = 10_000) = OfferDetails(
     "/Users/me",
     listOf(
         OfferTarget("Projects", true, "/Users/me/Projects", "/Users/me/Projects (copy)", true),
-        OfferTarget("Documents/report.xlsx", false, "/Users/me/Documents/report.xlsx", "/Users/me/Documents/report (copy).xlsx", false),
+        OfferTarget("Documents/report.xlsx", false, "/Users/me/Documents/report.xlsx", "/Users/me/Documents/report (copy).xlsx", false, folder = "Documents"),
     ),
 )
 
@@ -136,17 +141,16 @@ class FolderSizesTest {
 @OptIn(ExperimentalTestApi::class)
 class AcceptDialogTest {
     @Test
-    fun `shows the offer and reports the decision`() = runComposeUiTest {
+    fun `shows the first item, how many more, where they go, and reports the decision`() = runComposeUiTest {
         var decided: Decision? = null
-        setContent { AppTheme { AcceptContent(offer(), onDecide = { decided = it }) } }
+        var showAll = false
+        setContent { AppTheme { AcceptContent(offer(), onDecide = { decided = it }, onShowAll = { showAll = true }) } }
         onNodeWithText("4 files · 1000 B").assertExists()
-        onAllNodesWithText("new 2").assertCountEquals(3) // summary, Projects, src
-        onNodeWithText("src").performClick() // expand
-        onNodeWithText("b.kt").assertExists()
-        onAllNodesWithTag("target", useUnmergedTree = true).assertCountEquals(2)
-        onNodeWithText("→ /Users/me/Projects · exists: Accept merges into it").assertExists() // not under this test's home, so in full
-        onNodeWithText("as copy → /Users/me/Projects (copy)").assertExists()
-        onNodeWithText("→ /Users/me/Documents/report.xlsx · new here").assertExists()
+        onNodeWithText("Projects").assertExists()
+        onNodeWithText("report.xlsx").assertDoesNotExist() // the second item is behind "+ 1 more"
+        onNodeWithText("+ 1 more").performClick()
+        assertTrue(showAll)
+        onNodeWithTag("goes-to").assertTextEquals("several folders, see all files") // Projects → home, report → Documents
         onNodeWithText("Accept as copy").performClick()
         assertEquals(Decision.AcceptCopy, decided)
         onNodeWithText("Accept").performClick()
@@ -154,28 +158,42 @@ class AcceptDialogTest {
     }
 
     @Test
-    fun `changing a folder asks for a preview with it, and folders outside home are refused`() = runComposeUiTest {
+    fun `Change… moves everything, Reset brings it back, folders outside home are refused`() = runComposeUiTest {
         var asked: Map<String, String>? = null
         var picked = "/Users/me/Clients"
-        setContent { AppTheme { AcceptContent(offer(), {}, onFolders = { asked = it }, pickFolder = { picked }) } }
-        onAllNodesWithText("Change…")[0].performClick() // first root in the tree: Projects
-        assertEquals(mapOf("Projects" to "Clients"), asked)
-        onNodeWithText("Put everything in…").performClick()
+        var folders by mutableStateOf(emptyMap<String, String>())
+        setContent { AppTheme { AcceptContent(offer(), {}, folders = folders, onFolders = { asked = it; folders = it }, pickFolder = { picked }) } }
+        onNodeWithText("Change…").performClick()
         assertEquals(mapOf("Projects" to "Clients", "Documents/report.xlsx" to "Clients"), asked)
+        onNodeWithText("Reset").performClick()
+        assertEquals(emptyMap(), asked)
         picked = "/Volumes/USB"
         asked = null
-        onAllNodesWithText("Change…")[0].performClick()
+        onNodeWithText("Change…").performClick()
         assertEquals(null, asked)
         onNodeWithTag("error").assertTextContains("inside your home folder", substring = true)
     }
 
     @Test
-    fun `a moved root can be reset`() = runComposeUiTest {
+    fun `one common folder is shown as the destination`() = runComposeUiTest {
+        val o = offer().let { it.copy(targets = it.targets.map { t -> t.copy(folder = "Clients", moved = true) }) }
+        setContent { AppTheme { AcceptContent(o, {}, folders = mapOf("*" to "Clients")) } }
+        onNodeWithTag("goes-to").assertTextEquals("/Users/me/Clients")
+    }
+
+    @Test
+    fun `all items show per-item destinations, Change… and Put everything in…`() = runComposeUiTest {
         var asked: Map<String, String>? = null
-        val moved = offer().let { o -> o.copy(targets = o.targets.map { if (it.root == "Projects") it.copy(moved = true, folder = "Clients") else it }) }
-        setContent { AppTheme { AcceptContent(moved, {}, folders = mapOf("Projects" to "Clients"), onFolders = { asked = it }) } }
-        onNodeWithText("Reset").performClick()
-        assertEquals(emptyMap(), asked)
+        setContent { AppTheme { AllItemsContent(offer(), onFolders = { asked = it }, pickFolder = { "/Users/me/Clients" }) } }
+        onAllNodesWithTag("target", useUnmergedTree = true).assertCountEquals(2)
+        onNodeWithText("→ /Users/me/Projects · exists: Accept merges into it").assertExists()
+        onNodeWithText("as copy → /Users/me/Projects (copy)").assertExists()
+        onNodeWithText("src").performClick() // expand
+        onNodeWithText("b.kt").assertExists()
+        onAllNodesWithText("Change…")[0].performClick()
+        assertEquals(mapOf("Projects" to "Clients"), asked)
+        onNodeWithText("Put everything in…").performClick()
+        assertEquals(mapOf("Projects" to "Clients", "Documents/report.xlsx" to "Clients"), asked)
     }
 
     @Test
@@ -186,19 +204,63 @@ class AcceptDialogTest {
 }
 
 @OptIn(ExperimentalTestApi::class)
-class IssueListTest {
+class RootsLabelTest {
     @Test
-    fun `expands to each path and reason`() = runComposeUiTest {
-        val issues = listOf(
-            JobIssue("Proj/escape", IssueKind.Skipped, "symlink pointing outside Proj (→ ../../etc)"),
-            JobIssue("Proj/big.bin", IssueKind.Failed, "changed while being sent; Resume sends it again"),
-        )
-        setContent { AppTheme { IssueList(issues) } }
-        onNodeWithText("⚠ 2 not transferred ▸").assertExists()
+    fun `first item plus a list of all`() = runComposeUiTest {
+        setContent { AppTheme { RootsLabel(listOf("work/gova", "work/notes.md", "work/old")) } }
+        onNodeWithText("work/gova").assertExists()
+        onNodeWithText("work/old").assertDoesNotExist()
+        onNodeWithText("+ 2 more").performClick()
+        onNodeWithText("work/old").assertExists()
+        onNodeWithText("3 items").assertExists()
+    }
+}
+
+@OptIn(ExperimentalTestApi::class)
+class IssueListTest {
+    private val issues = listOf(
+        JobIssue("Proj/escape", IssueKind.Skipped, "symlink pointing outside Proj (→ ../../etc)"),
+        JobIssue("Proj/big.bin", IssueKind.Failed, "changed while being sent; Resume sends it again"),
+        JobIssue("Proj/a.bin", IssueKind.Failed, "could not be written: disk error"),
+    )
+
+    @Test
+    fun `the link only opens the list`() = runComposeUiTest {
+        var opened = false
+        setContent { AppTheme { IssueList(issues, onOpen = { opened = true }) } }
+        onNodeWithText("⚠ 3 not transferred ▸").performClick()
+        assertTrue(opened)
         onNodeWithText("Proj/escape").assertDoesNotExist()
-        onNodeWithTag("issues").performClick()
+    }
+
+    @Test
+    fun `the list shows paths and reasons and filters by kind`() = runComposeUiTest {
+        setContent { AppTheme { IssuesContent(issues) } }
+        onNodeWithText("3 items not transferred").assertExists()
         onNodeWithText("Proj/escape").assertExists()
         onNodeWithText("changed while being sent; Resume sends it again").assertExists()
+        onNodeWithText("Failed 2").performClick()
+        onNodeWithText("Proj/escape").assertDoesNotExist()
+        onNodeWithText("Proj/a.bin").assertExists()
+        onNodeWithText("Skipped 1").performClick()
+        onNodeWithText("Proj/a.bin").assertDoesNotExist()
+        onNodeWithText("Proj/escape").assertExists()
+    }
+
+    @Test
+    fun `natural order sorts numbers by value`() {
+        assertEquals(listOf("out-4.o", "Out-5.o", "out-12.o", "out-012b.o", "out-100.o"),
+            listOf("out-100.o", "out-12.o", "Out-5.o", "out-4.o", "out-012b.o").sortedWith(NATURAL_ORDER))
+    }
+
+    @Test
+    fun `copy list is one line per entry, failures first`() {
+        assertEquals(
+            "failed\tProj/a.bin\tcould not be written: disk error\n" +
+                "failed\tProj/big.bin\tchanged while being sent; Resume sends it again\n" +
+                "skipped\tProj/escape\tsymlink pointing outside Proj (→ ../../etc)",
+            issuesText(issues),
+        )
     }
 }
 
@@ -212,6 +274,26 @@ class FilesListTest {
         val items = listFolder(tmp, "", showHidden = false).associateBy { it.name }
         assertEquals(setOf("Desktop", "Pictures", "Library"), items.values.filter { it.isProtected }.map { it.name }.toSet())
         assertEquals(setOf("Documents", "Projects"), items.values.filter { it.sendable }.map { it.name }.toSet())
+    }
+}
+
+class SelectionTest {
+    private fun item(rel: String, sendable: Boolean = true) =
+        FileItem(rel.substringAfterLast('/'), rel, Path.of("/h/$rel"), true, isLink = !sendable, size = 0, mtime = 0)
+
+    @Test
+    fun `toggle, shift range and the header checkbox, skipping what can't be sent`() {
+        val items = listOf(item("P/a"), item("P/link", sendable = false), item("P/b"), item("P/c"))
+        var s = Selection.toggle(emptySet(), "P/b")
+        assertEquals(setOf("P/b"), s)
+        assertEquals(emptySet(), Selection.toggle(s, "P/b"))
+        assertEquals(setOf("P/a", "P/b", "P/c"), Selection.range(emptySet(), items, 3, 0))
+        assertEquals(ToggleableState.Off, Selection.folderState(emptySet(), items))
+        assertEquals(ToggleableState.Indeterminate, Selection.folderState(setOf("P/a"), items))
+        s = Selection.setAll(items, on = true)
+        assertEquals(setOf("P/a", "P/b", "P/c"), s)
+        assertEquals(ToggleableState.On, Selection.folderState(s, items))
+        assertEquals(emptySet(), Selection.setAll(items, on = false))
     }
 }
 

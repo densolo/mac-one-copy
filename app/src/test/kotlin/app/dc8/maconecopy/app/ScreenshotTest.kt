@@ -115,10 +115,14 @@ class ScreenshotTest {
             withContext(Dispatchers.Swing) { studioModel.screen = Screen.Transfers }
             shot("studio-transfers") { App(studioModel) }
             val details = book.inspectOffer(offer)
-            shot("accept-dialog", 720, 600) { AcceptContent(details, onDecide = {}) }
-            val moved = mapOf("Projects" to "Clients/2026")
+            shot("accept-dialog", 640, 520) { AcceptContent(details, onDecide = {}) }
+            shot("accept-all-items", 760, 640) { AllItemsContent(details) }
+            val many = (1..40).map { app.dc8.maconecopy.JobIssue("Projects/build/out-$it.o", if (it % 4 == 0) app.dc8.maconecopy.IssueKind.Failed else app.dc8.maconecopy.IssueKind.Skipped,
+                if (it % 4 == 0) "changed while being sent; Resume sends it again" else "symlink pointing outside Projects (→ /tmp/cache/$it)") }
+            shot("issues", 720, 560) { IssuesContent(many) }
+            val moved = mapOf("*" to "Clients/2026")
             val movedDetails = book.inspectOffer(offer, moved)
-            shot("accept-dialog-moved", 720, 600) { AcceptContent(movedDetails, onDecide = {}, folders = moved) }
+            shot("accept-dialog-moved", 640, 520) { AcceptContent(movedDetails, onDecide = {}, folders = moved) }
             val fresh = withContext(Dispatchers.Swing) { AppModel(Engine(AppPaths(tmp.resolve("new/data")), Settings(displayName = "New Mac")), scope) }
             shot("setup") { App(fresh) }
 

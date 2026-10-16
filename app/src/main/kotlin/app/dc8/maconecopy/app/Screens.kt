@@ -1,6 +1,7 @@
 package app.dc8.maconecopy.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import app.dc8.maconecopy.JobIssue
 import app.dc8.maconecopy.IssueKind
 import androidx.compose.ui.platform.testTag
@@ -27,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -224,7 +226,7 @@ private fun JobRow(model: AppModel, j: JobView) {
                 Text(if (j.direction == Direction.Sent) "→" else "←", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(j.roots.joinToString(", "), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    RootsLabel(j.roots, FontWeight.Medium)
                     Muted("${if (j.direction == Direction.Sent) "to" else "from"} ${j.peerName} · ${Format.count(j.totalFiles, "file")} · ${Format.bytes(j.totalBytes)}")
                 }
                 Text(stateLabel(j), color = if (j.state == JobState.Failed) MaterialTheme.colorScheme.error else Color.Unspecified)
@@ -240,7 +242,7 @@ private fun JobRow(model: AppModel, j: JobView) {
                 }
             }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                if (j.issues.isNotEmpty()) Box(Modifier.weight(1f)) { IssueList(j.issues) }
+                if (j.issues.isNotEmpty()) Box(Modifier.weight(1f)) { IssueList(j.issues, subject = j.roots.firstOrNull() ?: "") }
                 if (j.incomingOffer) OutlinedButton(onClick = { model.review(j.id) }) { Text("Review…") }
                 if (j.state == JobState.Transferring) TextButton(onClick = { model.run { model.engine.pause(j.id) } }) { Text("Pause") }
                 if (j.state == JobState.Paused || j.state == JobState.Failed) TextButton(onClick = { model.run { model.engine.resume(j.id) } }) { Text("Resume") }
@@ -253,7 +255,7 @@ private fun JobRow(model: AppModel, j: JobView) {
 @Composable
 private fun HistoryRow(h: HistoryEntry) = Column(Modifier.padding(vertical = 8.dp)) {
     HistoryLine(h)
-    if (h.issues.isNotEmpty()) Box(Modifier.padding(start = 24.dp)) { IssueList(h.issues) }
+    if (h.issues.isNotEmpty()) Box(Modifier.padding(start = 24.dp)) { IssueList(h.issues, subject = h.roots.firstOrNull() ?: "") }
 }
 
 @Composable
@@ -261,7 +263,7 @@ private fun HistoryLine(h: HistoryEntry) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(if (h.direction == Direction.Sent) "→" else "←", Modifier.width(24.dp))
         Column(Modifier.weight(1f)) {
-            Text(h.roots.joinToString(", "), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            RootsLabel(h.roots)
             Muted("${h.peerName} · ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(java.util.Date(h.startedAt))} · " +
                 "${h.decision?.name ?: "–"} · ${Format.count(h.filesTransferred, "file")}, ${h.filesSkipped} skipped, ${h.filesFailed} failed")
         }
@@ -272,27 +274,28 @@ private fun HistoryLine(h: HistoryEntry) {
     }
 }
 
-/**
- * "⚠ 3 not transferred", which expands to each path and why: skipped symlinks and special files,
- * files that changed while sending, damaged pieces, links that could not be created, …
- */
+/** The first item of a job, then "+ N more", which opens a list of all items. */
 @Composable
-fun IssueList(issues: List<JobIssue>, title: String = "${issues.size} not transferred") {
+fun RootsLabel(roots: List<String>, weight: FontWeight = FontWeight.Normal) {
     var open by remember { mutableStateOf(false) }
-    Column {
-        TextButton(onClick = { open = !open }, contentPadding = PaddingValues(horizontal = 0.dp), modifier = Modifier.testTag("issues")) {
-            Text("⚠ $title " + if (open) "▾" else "▸", color = MaterialTheme.colorScheme.error)
-        }
-        if (open) Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(bottom = 4.dp)) {
-            for (i in issues.sortedWith(compareBy({ it.kind }, { it.path }))) Row(Modifier.padding(vertical = 2.dp)) {
-                Text(if (i.kind == IssueKind.Failed) "failed" else "skipped", Modifier.width(64.dp), style = MaterialTheme.typography.labelSmall,
-                    color = if (i.kind == IssueKind.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                Column {
-                    Text(i.path, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                    Muted(i.message)
-                }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(roots.firstOrNull() ?: "", Modifier.weight(1f, fill = false), fontWeight = weight, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (roots.size > 1) Box {
+            MoreLink(roots.size - 1) { open = true }
+            DropdownMenu(open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 360.dp)) {
+                Muted(Format.count(roots.size, "item"), Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                for (r in roots) Text(r, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
 }
+
+/** "+ N more" as a small link, so it doesn't make its row taller like a button would. */
+@Composable
+fun MoreLink(n: Int, onClick: () -> Unit) = Text(
+    "+ $n more",
+    Modifier.padding(start = 6.dp).clickable(onClick = onClick).padding(horizontal = 2.dp).testTag("more"),
+    color = MaterialTheme.colorScheme.primary,
+    style = MaterialTheme.typography.labelLarge,
+)
 
