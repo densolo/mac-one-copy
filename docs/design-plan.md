@@ -12,7 +12,7 @@ Work in two phases. Before writing code for each phase, give me a short plan (mo
 
 ## Concepts
 - Machine: a stable UUID generated on first run, plus a display name (default: hostname, editable).
-- All transfer paths are relative to the user's home directory, because account names differ between Macs. Reject absolute paths, `..`, and anything that resolves outside home (including through symlinks). Skip symlinks on send, with a warning.
+- All transfer paths are relative to the user's home directory, because account names differ between Macs. Reject absolute paths, `..`, and anything that resolves outside home (including through symlinks). Symlinks inside a sent folder whose target stays inside that folder are recreated as relative links (absolute targets inside it are made relative); other symlinks are skipped and recorded. The receiver creates links only after all files of the job are in place and re-checks each target against the actual destination.
 - A machine never lists itself as a target (the Machines screen shows it at the top as "This Mac", but it is never offered in "Send to").
 - macOS-protected home folders (Desktop, Downloads, Movies, Music, Pictures, Library incl. iCloud Drive, .Trash) are never read or written: sending from them is refused, offers into them are declined automatically, the file browser marks them with a lock and never opens or sizes them. Documents is allowed.
 - Provider: OneDrive only (`~/Library/CloudStorage/OneDrive-*` is offered as the default in the relay picker).
@@ -30,7 +30,7 @@ Display name and home folder are ordinary settings (home defaults to `~`; all re
 relay/
   peers/<machine-id>.json        # displayName, user, freeBytes (home volume), appVersion, lastSeen; rewritten every 30–60 s
   jobs/<job-id>/
-    manifest.json                # from, to, createdAt, roots, files: [relPath, size, mtime], emptyDirs
+    manifest.json                # from, to, createdAt, roots, files: [relPath, size, mtime], emptyDirs, links: [relPath, target], skipped: [path, reason]
     decision.json                # written by receiver: accept | accept-copy | decline, optional skip list
     control-<machine-id>.json    # pause / resume / cancel requests (+ reason) and acks from that side; receiver status and failures
     resend-NNNN.json             # written by the sender on resume after failure: files resent in full (new size/mtime), single segments, files given up on
@@ -78,6 +78,9 @@ States: Offered → Transferring ⇄ Paused → Completed | Cancelled | Failed; 
 - Failed (e.g. segment hash mismatch, source file changed during send): mark the job resumable; on resume, resend only the bad segments (hash mismatch) or the affected files (source changed).
 - Paused can also be entered automatically with a reason (e.g. "disk full"); the UI shows the reason.
 
+## Issues per job
+Every job keeps a list of what did not make it, with the reason: skipped by the sender (symlink outside the folder, special or unreadable file; sent along in the manifest so the receiver shows it too) or failed (changed while sending, damaged pieces, could not be written, given up, link not created). Items that arrive fine after Resume drop off. The list is part of the job view and the history entry, shown in Transfers per job and by the CLI's `issues JOB`.
+
 ## History and stats
 Persist every finished job (Completed, Cancelled, Failed, Declined) locally on both sides:
 - job id, direction (sent/received), peer name, root names, decision mode
@@ -118,6 +121,7 @@ Keep it in a small append-only JSON-lines file and expose it as a flow.
 - Accept dialog:
     - sender, total files and size, free space here (warn if insufficient)
     - an expandable tree with badges new / changed / same (by size + mtime)
+    - each root's destination with Accept and with Accept as copy; "Change…" puts a root into another folder inside home (keeping its name), "Put everything in…" moves all, "Reset" restores the sender's folder; statuses and the skip list are computed against the chosen place; the engine refuses protected or outside folders and two roots at one path
     - buttons: Accept, Accept as copy, Decline
 
 Keep the code compact and readable. Add a README covering usage, the relay protocol, and the OneDrive caveats.

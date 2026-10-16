@@ -1,6 +1,14 @@
 package app.dc8.maconecopy.app
 
 import androidx.compose.foundation.background
+import app.dc8.maconecopy.JobIssue
+import app.dc8.maconecopy.IssueKind
+import androidx.compose.ui.platform.testTag
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -82,7 +90,12 @@ fun App(model: AppModel) {
         }
     }
     model.openOffer?.let { details ->
-        AcceptDialog(details, onDecide = { model.decide(details.job.id, it) }, onClose = { model.closeOffer(details.job.id) })
+        AcceptDialog(
+            details, model.offerFolders, model.offerError,
+            onDecide = { model.decide(details.job.id, it) },
+            onFolders = { model.retarget(details.job.id, it) },
+            onClose = { model.closeOffer(details.job.id) },
+        )
     }
 }
 
@@ -226,7 +239,8 @@ private fun JobRow(model: AppModel, j: JobView) {
                     j.currentFile?.let { Muted(it, Modifier.width(320.dp)) }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                if (j.issues.isNotEmpty()) Box(Modifier.weight(1f)) { IssueList(j.issues) }
                 if (j.incomingOffer) OutlinedButton(onClick = { model.review(j.id) }) { Text("Review…") }
                 if (j.state == JobState.Transferring) TextButton(onClick = { model.run { model.engine.pause(j.id) } }) { Text("Pause") }
                 if (j.state == JobState.Paused || j.state == JobState.Failed) TextButton(onClick = { model.run { model.engine.resume(j.id) } }) { Text("Resume") }
@@ -237,8 +251,14 @@ private fun JobRow(model: AppModel, j: JobView) {
 }
 
 @Composable
-private fun HistoryRow(h: HistoryEntry) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun HistoryRow(h: HistoryEntry) = Column(Modifier.padding(vertical = 8.dp)) {
+    HistoryLine(h)
+    if (h.issues.isNotEmpty()) Box(Modifier.padding(start = 24.dp)) { IssueList(h.issues) }
+}
+
+@Composable
+private fun HistoryLine(h: HistoryEntry) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(if (h.direction == Direction.Sent) "→" else "←", Modifier.width(24.dp))
         Column(Modifier.weight(1f)) {
             Text(h.roots.joinToString(", "), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -251,3 +271,28 @@ private fun HistoryRow(h: HistoryEntry) {
         }
     }
 }
+
+/**
+ * "⚠ 3 not transferred", which expands to each path and why: skipped symlinks and special files,
+ * files that changed while sending, damaged pieces, links that could not be created, …
+ */
+@Composable
+fun IssueList(issues: List<JobIssue>, title: String = "${issues.size} not transferred") {
+    var open by remember { mutableStateOf(false) }
+    Column {
+        TextButton(onClick = { open = !open }, contentPadding = PaddingValues(horizontal = 0.dp), modifier = Modifier.testTag("issues")) {
+            Text("⚠ $title " + if (open) "▾" else "▸", color = MaterialTheme.colorScheme.error)
+        }
+        if (open) Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(bottom = 4.dp)) {
+            for (i in issues.sortedWith(compareBy({ it.kind }, { it.path }))) Row(Modifier.padding(vertical = 2.dp)) {
+                Text(if (i.kind == IssueKind.Failed) "failed" else "skipped", Modifier.width(64.dp), style = MaterialTheme.typography.labelSmall,
+                    color = if (i.kind == IssueKind.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                Column {
+                    Text(i.path, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    Muted(i.message)
+                }
+            }
+        }
+    }
+}
+

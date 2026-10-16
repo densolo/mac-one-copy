@@ -81,13 +81,16 @@ class ScreenshotTest {
             file(sHome, "Documents/notes.md", 3_000)
             for (d in listOf("Desktop", "Pictures", "Library", "Movies")) Files.createDirectories(sHome.resolve(d))
             Files.createSymbolicLink(sHome.resolve("link-to-tmp"), tmp)
+            Files.createSymbolicLink(sHome.resolve("Projects/latest"), java.nio.file.Path.of("src"))
+            Files.createSymbolicLink(sHome.resolve("Projects/outside"), tmp)
+            Files.createSymbolicLink(sHome.resolve("Documents/old-notes"), java.nio.file.Path.of("../../elsewhere"))
             file(book.settings.home, "Documents/report.xlsx", 100)
             file(book.settings.home, "Projects/src/Main.kt", 1_200)
             file(book.settings.home, "Videos/trip.mov", 8_000_000)
 
             eventually("peers") { studio.peers.value.isNotEmpty() && book.peers.value.isNotEmpty() }
             // A completed job for the history screen.
-            val done = studio.send(listOf("Documents/notes.md"), book.machineId).jobId
+            val done = studio.send(listOf("Documents"), book.machineId).jobId
             eventually("offer 1") { book.jobs.value.any { it.id == done && it.incomingOffer } }
             book.decide(done, Decision.Accept)
             eventually("history") { studio.history.value.any { it.jobId == done && it.outcome == JobState.Completed } }
@@ -112,7 +115,10 @@ class ScreenshotTest {
             withContext(Dispatchers.Swing) { studioModel.screen = Screen.Transfers }
             shot("studio-transfers") { App(studioModel) }
             val details = book.inspectOffer(offer)
-            shot("accept-dialog", 640, 560) { AcceptContent(details) {} }
+            shot("accept-dialog", 720, 600) { AcceptContent(details, onDecide = {}) }
+            val moved = mapOf("Projects" to "Clients/2026")
+            val movedDetails = book.inspectOffer(offer, moved)
+            shot("accept-dialog-moved", 720, 600) { AcceptContent(movedDetails, onDecide = {}, folders = moved) }
             val fresh = withContext(Dispatchers.Swing) { AppModel(Engine(AppPaths(tmp.resolve("new/data")), Settings(displayName = "New Mac")), scope) }
             shot("setup") { App(fresh) }
 

@@ -10,6 +10,7 @@ import java.nio.file.attribute.FileTime
 import kotlin.random.Random
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -71,6 +72,99 @@ class TransferScenariosTest {
     }
 
     @Test
+    fun `accept into a chosen folder, skipping what is already there`() = runBlocking {
+        cluster(16).use { c ->
+            val rnd = Random(16)
+            val a = c["A"].home
+            val b = c["B"].home
+            writeFile(a, "work/gova/a.txt", 2_000, rnd)
+            writeFile(a, "work/gova/sub/b.bin", 30_000, rnd)
+            writeFile(a, "Documents/report.xlsx", 5_000, rnd)
+            // B already has an identical a.txt, but in Clients/gova rather than work/gova.
+            Files.createDirectories(b.resolve("Clients/gova"))
+            Files.copy(a.resolve("work/gova/a.txt"), b.resolve("Clients/gova/a.txt"))
+            Files.setLastModifiedTime(b.resolve("Clients/gova/a.txt"), Files.getLastModifiedTime(a.resolve("work/gova/a.txt")))
+            c.awaitPeers()
+            val id = offer(c, "A", "B", "work/gova", "Documents/report.xlsx")
+            val folders = mapOf("work/gova" to "Clients")
+
+            val details = c["B"].engine.inspectOffer(id, folders)
+            val gova = details.targets.first { it.root == "work/gova" }
+            assertEquals(b.resolve("Clients/gova").toString(), gova.path)
+            assertEquals(b.resolve("Clients/gova (copy)").toString(), gova.copyPath)
+            assertTrue(gova.moved && gova.exists && gova.folder == "Clients")
+            assertEquals(FileStatus.Same, details.files.first { it.path == "work/gova/a.txt" }.status, "compared against the new place")
+            assertEquals(b.resolve("Documents/report.xlsx").toString(), details.targets.first { it.root == "Documents/report.xlsx" }.path)
+
+            c["B"].engine.decide(id, Decision.Accept, folders)
+            awaitBoth(c, id, JobState.Completed)
+            assertSameTree(a.resolve("work/gova"), b.resolve("Clients/gova"))
+            assertSameTree(a.resolve("Documents"), b.resolve("Documents"))
+            assertFalse(Files.exists(b.resolve("work")))
+            assertEquals(1, c["B"].historyOf(id).filesSkipped)
+        }
+    }
+
+    @Test
+    fun `accept as copy into a chosen folder, and bad folders are refused`() = runBlocking {
+        cluster(17).use { c ->
+            val rnd = Random(17)
+            writeFile(c["A"].home, "x/gova/a.txt", 100, rnd)
+            writeFile(c["A"].home, "y/gova/b.txt", 100, rnd)
+            writeFile(c["B"].home, "Inbox/gova/old.txt", 10, rnd)
+            c.awaitPeers()
+            val id = offer(c, "A", "B", "x/gova", "y/gova")
+            val e = c["B"].engine
+            for (bad in listOf("Desktop", "../outside", "Library/Mobile Documents")) {
+                assertFailsWith<Exception>(bad) { e.inspectOffer(id, mapOf("*" to bad)) }
+                assertFailsWith<Exception>(bad) { e.decide(id, Decision.Accept, mapOf("*" to bad)) }
+            }
+            val clash = assertFailsWith<EngineException> { e.decide(id, Decision.Accept, mapOf("*" to "Inbox")) }
+            assertTrue("same place" in clash.message!!, clash.message)
+            assertEquals(JobState.Offered, c["B"].state(id), "a refused answer leaves the offer open")
+
+            // As copy, both land in Inbox under free names.
+            e.decide(id, Decision.AcceptCopy, mapOf("*" to "Inbox"))
+            awaitBoth(c, id, JobState.Completed)
+            assertSameTree(c["A"].home.resolve("x/gova"), c["B"].home.resolve("Inbox/gova (copy)"))
+            assertSameTree(c["A"].home.resolve("y/gova"), c["B"].home.resolve("Inbox/gova (copy 2)"))
+            assertTrue(Files.exists(c["B"].home.resolve("Inbox/gova/old.txt")))
+        }
+    }
+
+    @Test
+    fun `symlinks inside the item are recreated, the rest is listed as issues on both sides`() = runBlocking {
+        cluster(18).use { c ->
+            val rnd = Random(18)
+            val a = c["A"].home
+            writeFile(a, "Proj/lib/v2/core.bin", 20_000, rnd)
+            Files.createSymbolicLink(a.resolve("Proj/lib/current"), Path.of("v2"))
+            Files.createSymbolicLink(a.resolve("Proj/core"), Path.of("lib/current/core.bin"))
+            Files.createSymbolicLink(a.resolve("Proj/escape"), Path.of("../../etc"))
+            writeFile(a, "Proj/readme.txt", 300, rnd)
+            c.awaitPeers()
+            val id = c["A"].engine.send(listOf("Proj"), c["B"].engine.machineId).jobId
+            eventually("offer") { c["B"].view(id)?.incomingOffer == true }
+            val d = c["B"].engine.inspectOffer(id)
+            assertEquals(mapOf("Proj/core" to "lib/current/core.bin", "Proj/lib/current" to "v2"), d.links)
+            assertEquals(listOf("Proj/escape"), d.skipped.map { it.path })
+            assertEquals(listOf("Proj/escape"), c["B"].view(id)!!.issues.map { it.path }, "the receiver sees what the sender left out")
+
+            c["B"].engine.decide(id, Decision.AcceptCopy)
+            awaitBoth(c, id, JobState.Completed)
+            val b = c["B"].home.resolve("Proj (copy)")
+            assertEquals(Path.of("v2"), Files.readSymbolicLink(b.resolve("lib/current")))
+            assertEquals(Path.of("lib/current/core.bin"), Files.readSymbolicLink(b.resolve("core")))
+            assertContentEquals(Files.readAllBytes(a.resolve("Proj/core")), Files.readAllBytes(b.resolve("core")), "the link resolves on the receiver")
+            assertFalse(Files.exists(b.resolve("escape"), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            for (m in listOf("A", "B")) {
+                val issues = c[m].historyOf(id).issues
+                assertEquals(listOf(JobIssue("Proj/escape", IssueKind.Skipped, "symlink pointing outside Proj (→ ../../etc)")), issues, m)
+            }
+        }
+    }
+
+    @Test
     fun `an offer into a protected folder is declined automatically`() = runBlocking {
         cluster(15).use { c ->
             c.awaitPeers()
@@ -99,6 +193,11 @@ class TransferScenariosTest {
             c.awaitPeers()
 
             val id = offer(c, "A", "B", "Projects", "Documents/report.xlsx")
+            val targets = c["B"].engine.inspectOffer(id).targets.associateBy { it.root }
+            assertEquals(b.resolve("Projects").toString(), targets.getValue("Projects").path)
+            assertEquals(b.resolve("Projects (copy 2)").toString(), targets.getValue("Projects").copyPath)
+            assertEquals(b.resolve("Documents/report (copy).xlsx").toString(), targets.getValue("Documents/report.xlsx").copyPath)
+            assertTrue(targets.getValue("Projects").exists && targets.getValue("Projects").isDir && !targets.getValue("Documents/report.xlsx").isDir)
             c["B"].engine.decide(id, Decision.AcceptCopy)
             awaitBoth(c, id, JobState.Completed)
 
@@ -246,11 +345,13 @@ class TransferScenariosTest {
             c["B"].engine.decide(id, Decision.Accept)
             awaitBoth(c, id, JobState.Failed)
             assertEquals(1, c["B"].historyOf(id).filesFailed)
+            for (m in listOf("A", "B")) assertEquals(listOf("Projects/x/y/z.txt"), c[m].view(id)!!.issues.filter { it.kind == IssueKind.Failed }.map { it.path }, m)
 
             c["A"].engine.resume(id)
             awaitBoth(c, id, JobState.Completed)
             assertSameTree(c["A"].home.resolve("Projects"), c["B"].home.resolve("Projects"))
             assertTrue(c["A"].logs.any { "resending 1 file(s) and 0 segment(s)" in it })
+            for (m in listOf("A", "B")) assertTrue(c[m].historyOf(id).issues.isEmpty(), "resolved on resume ($m)")
         }
     }
 

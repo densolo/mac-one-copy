@@ -4,6 +4,7 @@ import app.dc8.maconecopy.AppPaths
 import app.dc8.maconecopy.Decision
 import app.dc8.maconecopy.Direction
 import app.dc8.maconecopy.HistoryEntry
+import app.dc8.maconecopy.JobIssue
 import app.dc8.maconecopy.JobState
 import app.dc8.maconecopy.chunk.SegHash
 import app.dc8.maconecopy.chunk.SegmentMap
@@ -50,6 +51,8 @@ data class JobRecord(
     // Stats.
     var bytesTransferred: Long = 0,
     var filesSkipped: Int = 0,
+    /** What has not made it, with reasons; shown per job and kept in history. */
+    val issues: MutableList<JobIssue> = mutableListOf(),
     var send: SendState? = null,
     var recv: RecvState? = null,
 )
@@ -100,6 +103,8 @@ data class RecvState(
     val overrides: MutableMap<Int, FileEntry> = mutableMapOf(),
     /** File → resend gen it was reset at; records from older chunks are ignored. */
     val resetGen: MutableMap<Int, Int> = mutableMapOf(),
+    /** Symlinks are created once, after every file is in place. */
+    var linksDone: Boolean = false,
 )
 
 /** A file being received: verified segments, and the segment lists of the FILE_END records seen. */

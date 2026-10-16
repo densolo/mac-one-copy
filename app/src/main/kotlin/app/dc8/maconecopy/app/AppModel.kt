@@ -31,6 +31,12 @@ class AppModel(val engine: Engine, val scope: CoroutineScope) {
     val offerQueue = mutableStateListOf<String>()
     var openOffer by mutableStateOf<OfferDetails?>(null)
         private set
+    /** Folders chosen in the open accept dialog: root → folder relative to home. */
+    var offerFolders by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+    /** A problem to show inside the accept dialog (bad folder, two items in one place, …). */
+    var offerError by mutableStateOf<String?>(null)
+        private set
     private val seenOffers = HashSet<String>()
 
     /** Called when a new incoming offer shows up; set by [MacIntegration] to bounce the Dock icon. */
@@ -56,22 +62,46 @@ class AppModel(val engine: Engine, val scope: CoroutineScope) {
     fun showNextOffer() {
         if (openOffer != null || !windowVisible) return
         val id = offerQueue.firstOrNull() ?: return
-        run { openOffer = engine.inspectOffer(id) }
+        review(id)
     }
 
-    fun decide(id: String, decision: Decision) = run {
-        engine.decide(id, decision)
-        closeOffer(id)
+    /** Answers the open offer with the chosen folders; a refused answer keeps the dialog open with the reason. */
+    fun decide(id: String, decision: Decision) = scope.launch(Dispatchers.Swing) {
+        try {
+            engine.decide(id, decision, offerFolders)
+            closeOffer(id)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            offerError = e.message ?: e.toString()
+        }
     }
 
     /** Hides the dialog; the offer stays in the Transfers list. */
     fun closeOffer(id: String) {
         offerQueue.remove(id)
         openOffer = null
+        offerFolders = emptyMap()
+        offerError = null
         showNextOffer()
     }
 
-    fun review(id: String) = run { openOffer = engine.inspectOffer(id) }
+    fun review(id: String) = run {
+        offerFolders = emptyMap()
+        offerError = null
+        openOffer = engine.inspectOffer(id)
+    }
+
+    /** Previews the open offer with other folders; an unusable folder is reported in the dialog and not applied. */
+    fun retarget(id: String, folders: Map<String, String>) = scope.launch(Dispatchers.Swing) {
+        try {
+            openOffer = engine.inspectOffer(id, folders)
+            offerFolders = folders
+            offerError = null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            offerError = e.message ?: e.toString()
+        }
+    }
 
     fun updateSettings(transform: (Settings) -> Settings, then: () -> Unit = {}) = run {
         engine.updateSettings(transform)

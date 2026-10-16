@@ -43,8 +43,11 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 
-data class FileItem(val name: String, val rel: String, val path: Path, val isDir: Boolean, val isLink: Boolean, val size: Long, val mtime: Long, val isProtected: Boolean = false) {
-    /** Symlinks and macOS-protected folders are shown but cannot be selected or sent. */
+data class FileItem(
+    val name: String, val rel: String, val path: Path, val isDir: Boolean, val isLink: Boolean, val size: Long, val mtime: Long,
+    val isProtected: Boolean = false, val linkTarget: String? = null,
+) {
+    /** Symlinks (sent only as part of a folder) and macOS-protected folders cannot be selected on their own. */
     val sendable get() = !isLink && !isProtected
 }
 
@@ -61,7 +64,8 @@ fun listFolder(home: Path, rel: String, showHidden: Boolean): List<FileItem> {
             val a = runCatching { Files.readAttributes(p, BasicFileAttributes::class.java, NOFOLLOW_LINKS) }.getOrNull() ?: return@mapNotNull null
             val name = p.fileName.toString()
             val itemRel = if (rel.isEmpty()) name else "$rel/$name"
-            FileItem(name, itemRel, p, a.isDirectory, a.isSymbolicLink, a.size(), a.lastModifiedTime().toMillis(), ProtectedFolders.of(itemRel) != null)
+            val target = if (a.isSymbolicLink) runCatching { Files.readSymbolicLink(p).toString() }.getOrNull() else null
+            FileItem(name, itemRel, p, a.isDirectory, a.isSymbolicLink, a.size(), a.lastModifiedTime().toMillis(), ProtectedFolders.of(itemRel) != null, target)
         }
         .sortedWith(compareBy<FileItem>({ !it.isDir }, { it.name.lowercase() }))
 }
@@ -146,7 +150,7 @@ fun FilesScreen(model: AppModel) {
                     Muted(
                         when {
                             item.isProtected -> "macOS-protected, not synced"
-                            item.isLink -> "symlink, not sent"
+                            item.isLink -> "symlink → ${item.linkTarget ?: "?"}"
                             else -> java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(java.util.Date(item.mtime))
                         },
                         Modifier.width(if (item.isProtected) 220.dp else 140.dp),

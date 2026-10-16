@@ -5,9 +5,11 @@ import app.dc8.maconecopy.Direction
 import app.dc8.maconecopy.Engine
 import app.dc8.maconecopy.EngineException
 import app.dc8.maconecopy.FileStatus
+import app.dc8.maconecopy.IssueKind
 import app.dc8.maconecopy.JobState
 import app.dc8.maconecopy.OfferDetails
 import app.dc8.maconecopy.OfferFile
+import app.dc8.maconecopy.OfferTarget
 import app.dc8.maconecopy.chunk.ChunkCodec
 import app.dc8.maconecopy.chunk.SegHash
 import app.dc8.maconecopy.fs.CopyNames
@@ -39,6 +41,7 @@ internal class Receiver(private val e: Engine) {
 
     fun create(m: Manifest) {
         val rec = JobRecord(m.jobId, Direction.Received, m.from, m.fromName, m.roots, m.createdAt)
+        rec.issues += m.skipped
         e.register(rec, m)
         e.log.info("offer ${m.jobId.take(8)} from ${m.fromName}: ${m.files.size} file(s)")
     }
@@ -48,21 +51,31 @@ internal class Receiver(private val e: Engine) {
         val roots = m.roots.map { e.home.normalize(it) }
         require(roots == m.roots && roots.isNotEmpty())
         fun underRoot(p: String) = roots.any { p == it || p.startsWith("$it/") }
-        (m.files.map { it.path } + m.emptyDirs).all { e.home.normalize(it) == it && underRoot(it) } &&
-            m.files.all { it.size >= 0 } && m.files.map { it.path }.distinct().size == m.files.size
+        val paths = m.files.map { it.path } + m.links.map { it.path }
+        (paths + m.emptyDirs).all { e.home.normalize(it) == it && underRoot(it) } &&
+            m.files.all { it.size >= 0 } && paths.distinct().size == paths.size
     }.getOrDefault(false)
 
-    fun decide(rec: JobRecord, decision: Decision) {
+    /**
+     * Answers an offer. [folders] optionally moves roots: root → folder (relative to home, "" for home
+     * itself) the root is placed in under its own name; key "*" applies to every root not listed.
+     * Other roots keep the sender's folder.
+     */
+    fun decide(rec: JobRecord, decision: Decision, folders: Map<String, String> = emptyMap()) {
         if (rec.direction != Direction.Received || rec.state != JobState.Offered) throw EngineException("job ${rec.id} is not an incoming offer")
         val relay = e.relay() ?: throw EngineException("relay folder not set")
         val m = e.manifest(rec)
-        rec.decision = decision
         if (decision == Decision.Decline) {
+            rec.decision = decision
             relay.write(relay.decision(rec.id), DecisionFile.serializer(), DecisionFile(decision, at = e.now()))
             return e.finish(rec, JobState.Declined)
         }
-        val skip = if (decision == Decision.Accept) m.files.indices.filter { statusOf(m.files[it].path, m.files[it].size, m.files[it].mtime) == FileStatus.Same } else emptyList()
-        val rootMap = if (decision == Decision.AcceptCopy) copyRoots(m) else m.roots.associateWith { it }
+        val rootMap = if (decision == Decision.AcceptCopy) copyRoots(m, folders) else acceptRoots(m, folders)
+        val skip = if (decision == Decision.Accept) m.files.indices.filter { i ->
+            val f = m.files[i]
+            statusOf(mapRoot(rootMap, f.path), f.size, f.mtime) == FileStatus.Same
+        } else emptyList()
+        rec.decision = decision
         rec.recv = RecvState(rootMap, skip.toSet())
         rec.filesSkipped = skip.size
         rec.state = JobState.Transferring
@@ -72,17 +85,36 @@ internal class Receiver(private val e: Engine) {
         e.save(rec)
     }
 
-    /** `report.xlsx` → `report (copy).xlsx`, `Projects` → `Projects (copy)`, then `(copy 2)`, … */
-    private fun copyRoots(m: Manifest): Map<String, String> {
+    /** The folder a root goes into: the chosen one, checked to be a safe, unprotected place in home, or the sender's. */
+    private fun folderOf(root: String, folders: Map<String, String>): String {
+        val chosen = folders[root] ?: folders["*"] ?: return root.substringBeforeLast('/', "")
+        val dir = chosen.trim().trim('/')
+        if (dir.isEmpty()) return ""
+        return e.home.normalize(dir).also { e.home.resolve(it) } // throws for "..", protected folders, symlinks out of home
+    }
+
+    private fun join(dir: String, name: String) = if (dir.isEmpty()) name else "$dir/$name"
+
+    /** Accept: each root keeps its name, in its chosen folder or the sender's. */
+    private fun acceptRoots(m: Manifest, folders: Map<String, String>): Map<String, String> {
+        val map = m.roots.associateWith { join(folderOf(it, folders), it.substringAfterLast('/')) }
+        map.values.groupBy { it.lowercase() }.values.firstOrNull { it.size > 1 }?.let { throw EngineException("two items would go to the same place: ${it.first()}") }
+        // One root inside another's destination would mix their files.
+        for ((r, d) in map) for ((o, od) in map) if (r != o && d.startsWith("$od/")) throw EngineException("$r would land inside $o")
+        return map
+    }
+
+    /** `report.xlsx` → `report (copy).xlsx`, `Projects` → `Projects (copy)`, then `(copy 2)`, … in the root's folder. */
+    private fun copyRoots(m: Manifest, folders: Map<String, String>): Map<String, String> {
         val reserved = HashSet<String>()
         return m.roots.associateWith { root ->
-            val parent = root.substringBeforeLast('/', "")
+            val dir = folderOf(root, folders)
             val isDir = m.files.none { it.path == root }
             val free = CopyNames.firstFree(root.substringAfterLast('/'), isDir) { candidate ->
-                val rel = if (parent.isEmpty()) candidate else "$parent/$candidate"
-                rel in reserved || Files.exists(e.home.root.resolve(rel), NOFOLLOW_LINKS)
+                val rel = join(dir, candidate)
+                rel.lowercase() in reserved || Files.exists(e.home.root.resolve(rel), NOFOLLOW_LINKS)
             }
-            (if (parent.isEmpty()) free else "$parent/$free").also { reserved += it }
+            join(dir, free).also { reserved += it.lowercase() }
         }
     }
 
@@ -92,11 +124,21 @@ internal class Receiver(private val e: Engine) {
         return if (attrs.isRegularFile && attrs.size() == size && attrs.lastModifiedTime().toMillis() == mtime) FileStatus.Same else FileStatus.Changed
     }
 
-    fun inspect(rec: JobRecord): OfferDetails {
+    /** What the offer looks like with the given folders: statuses against where files would go, and each root's destination. */
+    fun inspect(rec: JobRecord, folders: Map<String, String> = emptyMap()): OfferDetails {
         val m = e.manifest(rec)
-        val files = m.files.map { OfferFile(it.path, it.size, it.mtime, statusOf(it.path, it.size, it.mtime)) }
         val view = e.jobs.value.firstOrNull { it.id == rec.id } ?: throw EngineException("job ${rec.id} is not visible yet")
-        return OfferDetails(view, files, m.emptyDirs, m.files.sumOf { it.size }, e.freeSpace(e.home.root))
+        val accept = acceptRoots(m, folders)
+        // The same copy names decide() would pick right now, so the dialog shows where things really go.
+        val copies = copyRoots(m, folders)
+        val files = m.files.map { OfferFile(it.path, it.size, it.mtime, statusOf(mapRoot(accept, it.path), it.size, it.mtime)) }
+        val targets = m.roots.map { root ->
+            val dest = e.home.root.resolve(accept.getValue(root))
+            OfferTarget(root, m.files.none { it.path == root }, dest.toString(), e.home.root.resolve(copies.getValue(root)).toString(),
+                Files.exists(dest, NOFOLLOW_LINKS), folderOf(root, folders), root in folders || "*" in folders)
+        }
+        return OfferDetails(view, files, m.emptyDirs, m.files.sumOf { it.size }, e.freeSpace(e.home.root), e.home.root.toString(), targets,
+            m.links.associate { it.path to it.target }, m.skipped)
     }
 
     // ---- loop step -------------------------------------------------------------------------
@@ -151,13 +193,15 @@ internal class Receiver(private val e: Engine) {
             if (gen <= r.gen) continue
             val rf = relay.read(path, ResendFile.serializer()) ?: return
             for ((i, entry) in rf.files) {
+                e.clearFailure(rec, entry.path)
                 r.overrides[i] = entry
                 r.resetGen[i] = gen
                 r.done -= i; r.failed -= i; r.bad -= i
                 r.partial.remove(i)
                 runCatching { Files.deleteIfExists(partPath(rec, i)) }
             }
-            for (ref in rf.segments) r.bad -= ref.file
+            for (ref in rf.segments) { r.bad -= ref.file; e.clearFailure(rec, e.entry(rec, ref.file).path) }
+            for (i in rf.abandoned) e.addIssue(rec, e.entry(rec, i).path, IssueKind.Failed, "the sending Mac gave up on it: it no longer exists there")
             r.abandoned += rf.abandoned
             r.failed -= rf.abandoned.toSet()
             r.gen = gen
@@ -239,6 +283,7 @@ internal class Receiver(private val e: Engine) {
         for ((file, segs) in ends) r.partial.getOrPut(file) { PartFile() }.ends.let { if (segs !in it) it += segs }
         for (file in changed) {
             e.log.warn("sender reports ${e.entry(rec, file).path} changed while sending")
+            e.addIssue(rec, e.entry(rec, file).path, IssueKind.Failed, "changed on the sending Mac while being sent; Resume sends it again")
             r.failed += file
             r.partial.remove(file)
             runCatching { Files.deleteIfExists(partPath(rec, file)) }
@@ -261,6 +306,7 @@ internal class Receiver(private val e: Engine) {
         val contiguous = (end.firstOrNull()?.offset ?: 0L) == 0L && end.zipWithNext().all { (a, b) -> a.offset + a.length == b.offset }
         if (!contiguous || end.sumOf { it.length } != entry.size) {
             e.log.warn("bad segment list for ${entry.path}")
+            e.addIssue(rec, entry.path, IssueKind.Failed, "the sender's piece list does not match the file")
             r.failed += file
             return
         }
@@ -276,6 +322,7 @@ internal class Receiver(private val e: Engine) {
             }
             if (bad.isNotEmpty()) {
                 e.log.warn("${bad.size} bad segment(s) in ${entry.path}")
+                e.addIssue(rec, entry.path, IssueKind.Failed, "${bad.size} damaged piece(s); Resume asks for them again")
                 bad.forEach { part.segs.remove(it) }
                 r.bad[file] = bad
                 return
@@ -283,11 +330,13 @@ internal class Receiver(private val e: Engine) {
             if (Files.exists(dest, NOFOLLOW_LINKS)) e.trash(rec.id, e.home.relativize(dest), dest)
             Files.move(partFile, dest, ATOMIC_MOVE, REPLACE_EXISTING)
             Files.setLastModifiedTime(dest, FileTime.fromMillis(entry.mtime))
+            e.clearFailure(rec, entry.path)
             r.done += file
             r.partial.remove(file)
         } catch (ex: Exception) {
             if (ex is IOException && ex.message?.contains("No space left", ignoreCase = true) == true) throw ex
             e.log.warn("cannot finalize ${entry.path}: $ex")
+            e.addIssue(rec, entry.path, IssueKind.Failed, "could not be written: ${ex.message ?: ex.javaClass.simpleName}")
             r.failed += file
             r.partial.remove(file)
         }
@@ -297,9 +346,39 @@ internal class Receiver(private val e: Engine) {
         val expected = expected(rec)
         if (expected.any { it !in r.done && it !in r.failed && it !in r.bad }) return
         for (dir in e.manifest(rec).emptyDirs) runCatching { Files.createDirectories(e.home.resolve(mapRoot(rec, dir))) }
+        if (!r.linksDone) { createLinks(rec); r.linksDone = true }
         if (r.failed.isEmpty() && r.bad.isEmpty()) e.finish(rec, JobState.Completed, r.done.size, r.abandoned.size)
         else e.finish(rec, JobState.Failed, r.done.size, r.failed.size + r.bad.size + r.abandoned.size)
         e.writeControl(relay, rec)
+    }
+
+    /**
+     * Recreates the job's symlinks, after every file is in place so nothing is ever written through one.
+     * Each target is checked again against where the link really lands (the root may have been renamed
+     * as a copy or moved), and must stay inside that root; refused links are recorded as issues.
+     */
+    private fun createLinks(rec: JobRecord) {
+        val r = rec.recv!!
+        for (link in e.manifest(rec).links) {
+            fun fail(why: String) = e.addIssue(rec, link.path, IssueKind.Failed, why)
+            try {
+                val destRel = mapRoot(rec, link.path)
+                val root = r.rootMap.keys.first { link.path == it || link.path.startsWith("$it/") }
+                if (!ManifestBuilder.staysInside(r.rootMap.getValue(root), destRel.substringBeforeLast('/', ""), link.target)) {
+                    fail("symlink not created: → ${link.target} would point outside ${r.rootMap.getValue(root)} here"); continue
+                }
+                val dest = e.home.resolve(destRel)
+                Files.createDirectories(dest.parent)
+                if (Files.exists(dest, NOFOLLOW_LINKS)) {
+                    if (Files.isSymbolicLink(dest) && Files.readSymbolicLink(dest).toString() == link.target) continue
+                    if (rec.decision != Decision.Accept) { fail("symlink not created: something else is already there"); continue }
+                    e.trash(rec.id, destRel, dest)
+                }
+                Files.createSymbolicLink(dest, Path.of(link.target))
+            } catch (ex: Exception) {
+                fail("symlink not created: ${ex.message ?: ex.javaClass.simpleName}")
+            }
+        }
     }
 
     fun status(rec: JobRecord): ReceiverStatus = when (rec.state) {
@@ -323,8 +402,9 @@ internal class Receiver(private val e: Engine) {
         r.bad.clear()
     }
 
-    private fun mapRoot(rec: JobRecord, rel: String): String {
-        val map = rec.recv!!.rootMap
+    private fun mapRoot(rec: JobRecord, rel: String): String = mapRoot(rec.recv!!.rootMap, rel)
+
+    private fun mapRoot(map: Map<String, String>, rel: String): String {
         val root = map.keys.firstOrNull { rel == it || rel.startsWith("$it/") } ?: throw PathSafetyException("$rel is outside the job roots")
         return map.getValue(root) + rel.removePrefix(root)
     }

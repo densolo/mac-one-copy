@@ -4,6 +4,7 @@ import app.dc8.maconecopy.Decision
 import app.dc8.maconecopy.Direction
 import app.dc8.maconecopy.Engine
 import app.dc8.maconecopy.EngineException
+import app.dc8.maconecopy.IssueKind
 import app.dc8.maconecopy.JobState
 import app.dc8.maconecopy.chunk.ChunkCodec
 import app.dc8.maconecopy.chunk.ChunkLayout
@@ -40,6 +41,7 @@ internal class Sender(private val e: Engine) {
     fun create(m: Manifest, peerName: String) {
         val relay = e.relay() ?: throw EngineException("relay folder not set")
         val rec = JobRecord(m.jobId, Direction.Sent, m.to, peerName, m.roots, m.createdAt, send = SendState(chunkSize = e.settings.chunkSize))
+        rec.issues += m.skipped
         e.register(rec, m)
         relay.write(relay.manifest(m.jobId), Manifest.serializer(), m)
     }
@@ -74,6 +76,10 @@ internal class Sender(private val e: Engine) {
             ReceiverStatus.Failed -> if (rec.state != JobState.Failed) {
                 s.receiverFailed = pc.failed
                 s.receiverBad = pc.badSegments
+                val files = e.manifest(rec).files
+                for (i in pc.failed) if (i in files.indices && i !in s.changed) e.addIssue(rec, files[i].path, IssueKind.Failed, "failed on the receiving Mac; Resume sends it again")
+                for ((file, segs) in pc.badSegments.groupBy { it.file }) if (file in files.indices)
+                    e.addIssue(rec, files[file].path, IssueKind.Failed, "${segs.size} damaged piece(s) on the receiving Mac; Resume sends them again")
                 e.finish(rec, JobState.Failed, s.ackedFileEnds, (pc.failed + pc.badSegments.map { it.file }).distinct().size + s.abandoned.size)
             }
             else -> {}
@@ -139,9 +145,10 @@ internal class Sender(private val e: Engine) {
         for (i in files) {
             val path = e.manifest(rec).files[i].path
             val attrs = runCatching { Files.readAttributes(e.home.resolve(path), BasicFileAttributes::class.java, NOFOLLOW_LINKS) }.getOrNull()
-            if (attrs == null || !attrs.isRegularFile) s.abandoned += i
-            else resent[i] = FileEntry(path, attrs.size(), attrs.lastModifiedTime().toMillis())
+            if (attrs == null || !attrs.isRegularFile) { s.abandoned += i; e.addIssue(rec, path, IssueKind.Failed, "no longer exists here, given up") }
+            else { resent[i] = FileEntry(path, attrs.size(), attrs.lastModifiedTime().toMillis()); e.clearFailure(rec, path) }
         }
+        for (ref in s.receiverBad) e.clearFailure(rec, e.manifest(rec).files[ref.file].path)
         val segments = s.receiverBad.filter { it.file !in resent && it.file !in s.abandoned }
         s.gen++
         s.overrides.putAll(resent)
@@ -254,6 +261,7 @@ internal class Sender(private val e: Engine) {
     private fun markChanged(rec: JobRecord, file: Int) {
         rec.send!!.changed += file
         e.log.warn("source changed while sending: ${e.entry(rec, file).path}")
+        e.addIssue(rec, e.entry(rec, file).path, IssueKind.Failed, "changed while being sent; Resume sends it again")
     }
 
     /**

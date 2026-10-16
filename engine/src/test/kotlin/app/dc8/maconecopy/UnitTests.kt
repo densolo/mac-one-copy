@@ -245,7 +245,7 @@ class PathSafetyTest {
     }
 
     @Test
-    fun `manifest skips symlinks and records empty dirs`() {
+    fun `manifest skips outside symlinks and records empty dirs`() {
         val home = HomeDir(tmp.resolve("home"))
         val p = Files.createDirectories(home.root.resolve("P/sub"))
         Files.createDirectories(home.root.resolve("P/empty/nested"))
@@ -257,6 +257,39 @@ class PathSafetyTest {
         assertEquals(listOf("P"), m.roots)
         assertEquals(listOf("P/a.txt", "P/sub/b.txt"), m.files.map { it.path })
         assertEquals(listOf("P/empty/nested"), m.emptyDirs)
-        assertEquals(listOf("skipped symlink P/link"), m.warnings)
+        assertTrue(m.links.isEmpty())
+        assertEquals(listOf(JobIssue("P/link", IssueKind.Skipped, "symlink pointing outside P (→ $tmp)")), m.skipped)
+    }
+
+    @Test
+    fun `symlinks inside the item are kept as relative links, others are skipped with a reason`() {
+        val home = HomeDir(tmp.resolve("home"))
+        val app = Files.createDirectories(home.root.resolve("Apps/Tool.app/Versions/A"))
+        Files.writeString(app.resolve("bin"), "x")
+        val versions = home.root.resolve("Apps/Tool.app/Versions")
+        Files.createSymbolicLink(versions.resolve("Current"), Path.of("A"))                     // relative, inside
+        Files.createSymbolicLink(home.root.resolve("Apps/Tool.app/bin"), Path.of("Versions/Current/bin"))
+        Files.createSymbolicLink(home.root.resolve("Apps/Tool.app/abs"), app.resolve("bin"))    // absolute, inside: made relative
+        Files.createSymbolicLink(home.root.resolve("Apps/Tool.app/up"), Path.of("../../Other")) // escapes the item
+        Files.createSymbolicLink(home.root.resolve("Apps/Tool.app/loop"), Path.of(".."))        // the folder above the item
+        Files.createSymbolicLink(home.root.resolve("Apps/Tool.app/dot"), Path.of("."))          // the item's own folder: fine
+        Files.createDirectories(home.root.resolve("Apps/Only"))
+        Files.createSymbolicLink(home.root.resolve("Apps/Only/l"), Path.of("x"))                // dangling but inside: kept
+        val m = ManifestBuilder.build(home, listOf("Apps/Tool.app", "Apps/Only"))
+        assertEquals(
+            mapOf(
+                "Apps/Only/l" to "x",
+                "Apps/Tool.app/Versions/Current" to "A",
+                "Apps/Tool.app/abs" to "Versions/A/bin",
+                "Apps/Tool.app/bin" to "Versions/Current/bin",
+                "Apps/Tool.app/dot" to ".",
+            ),
+            m.links.associate { it.path to it.target },
+        )
+        assertEquals(setOf("Apps/Tool.app/up", "Apps/Tool.app/loop"), m.skipped.map { it.path }.toSet())
+        assertTrue(m.skipped.all { it.kind == IssueKind.Skipped && "outside Apps/Tool.app" in it.message })
+        assertTrue(m.emptyDirs.isEmpty(), "a folder holding only a link is not empty")
+        val e = assertFailsWith<EngineException> { ManifestBuilder.build(home, listOf("Apps/Tool.app/bin")) }
+        assertTrue("is a symlink itself" in e.message!!, e.message)
     }
 }

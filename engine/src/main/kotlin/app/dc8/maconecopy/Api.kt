@@ -23,6 +23,18 @@ enum class Decision {
     @SerialName("decline") Decline,
 }
 
+@Serializable
+enum class IssueKind {
+    /** Left out on purpose: a symlink pointing outside the item, a special file, an unreadable entry. */
+    Skipped,
+    /** Could not be transferred: changed while sending, failed its check, could not be written, … */
+    Failed,
+}
+
+/** Something of a job that did not make it, with the reason. */
+@Serializable
+data class JobIssue(val path: String, val kind: IssueKind, val message: String)
+
 /** A request made on this side that the peer has not confirmed yet. */
 @Serializable
 enum class Pending { Pausing, Resuming, Cancelling }
@@ -58,6 +70,8 @@ data class JobView(
     val etaSeconds: Long?,
     val currentFile: String?,
     val createdAt: Long,
+    /** What has not made it so far (skipped or failed), with reasons. */
+    val issues: List<JobIssue> = emptyList(),
 ) {
     val incomingOffer get() = direction == Direction.Received && state == JobState.Offered
     val progress get() = if (totalBytes == 0L) (if (state == JobState.Completed) 1.0 else 0.0) else doneBytes.toDouble() / totalBytes
@@ -79,6 +93,7 @@ data class HistoryEntry(
     val durationMs: Long,
     val avgBytesPerSecond: Double,
     val outcome: JobState,
+    val issues: List<JobIssue> = emptyList(),
 )
 
 @Serializable
@@ -86,6 +101,22 @@ enum class FileStatus { New, Changed, Same }
 
 @Serializable
 data class OfferFile(val path: String, val size: Long, val mtime: Long, val status: FileStatus)
+
+/**
+ * Where one root of an offer would land on this machine: [path] with Accept (merging into or replacing
+ * what is there if [exists]), [copyPath] with Accept as copy. Both are absolute. [folder] is the folder
+ * it goes into, relative to home ("" for home itself); [moved] is true if it differs from the sender's.
+ */
+@Serializable
+data class OfferTarget(
+    val root: String,
+    val isDir: Boolean,
+    val path: String,
+    val copyPath: String,
+    val exists: Boolean,
+    val folder: String = "",
+    val moved: Boolean = false,
+)
 
 /** Everything the accept dialog needs. */
 @Serializable
@@ -95,6 +126,12 @@ data class OfferDetails(
     val emptyDirs: List<String>,
     val totalBytes: Long,
     val freeBytesHere: Long,
+    val home: String = "",
+    val targets: List<OfferTarget> = emptyList(),
+    /** Symlinks that will be recreated, as path → target. */
+    val links: Map<String, String> = emptyMap(),
+    /** What the sender left out, with reasons. */
+    val skipped: List<JobIssue> = emptyList(),
 )
 
 data class SendResult(val jobId: String, val warnings: List<String>)

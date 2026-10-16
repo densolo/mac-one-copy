@@ -43,6 +43,10 @@ Both engines see the same local folder, so this test covers the File Provider be
   - **Settings:** relay, name, home, window, chunk size, poll interval, verify from disk, trash retention, and Empty trash.
   - **Help:** how it works, sending and receiving, what can be transferred, protected folders, OneDrive notes.
 - **Incoming offer:** the Dock icon bounces and its badge counts the waiting offers. The accept dialog opens with a tree that marks each file new, changed or same, and warns if there isn't enough free space.
+  - Each item shows where it will go, both with Accept and with Accept as copy.
+  - **Change…** puts an item into a folder you pick, under the same name. **Put everything in…** moves all items, and **Reset** puts one back where the sender had it.
+  - The new / changed / same marks, and what Accept skips, are then checked against the new place.
+  - The folder must be inside home and not a protected folder, and two items can't end up at the same path.
 - **There is no tray icon.** Closing the window only hides it, and the app keeps receiving. Click the Dock icon to bring the window back, or Cmd+Q to quit. The Dock menu and the window title show progress, e.g. "Studio — mac-one-copy · 2 jobs · 34%".
 - **Options:** `--data-dir`, `--name` and `--home`, the same as the CLI. The run configurations `app`, `app (2)` and `app (3)` start three copies on one Mac.
 - **Tests:** `ScreenshotTest` runs two real engines and renders every screen into `app/target/screenshots/`.
@@ -56,8 +60,9 @@ mac-one-copy-cli [--data-dir DIR] [--name NAME] [--home DIR] <command>
   peers                                           other machines on the relay
   send --to PEER PATH...                          offer files or folders (PEER: name or id prefix)
   jobs                                            running and waiting jobs
-  decide JOB accept|copy|decline                  answer an incoming offer
+  decide JOB accept|copy|decline [--into DIR]     answer an incoming offer (DIR: put everything there)
   pause JOB | resume JOB | cancel JOB             from either side
+  issues JOB                                      what a job left out or failed to transfer, and why
   history                                         finished jobs and totals per peer
 ```
 
@@ -87,7 +92,8 @@ The relay lives in `<relay folder>/relay/`:
 ```
 peers/<machine-id>.json          displayName, user, freeBytes, appVersion, lastSeen (rewritten every 45 s)
 jobs/<job-id>/
-  manifest.json                  sender: from, to, roots, files [path, size, mtime] sorted by path, emptyDirs
+  manifest.json                  sender: from, to, roots, files [path, size, mtime] sorted by path, emptyDirs,
+                                 links [path, relative target], skipped [path, reason]
   decision.json                  receiver: accept | accept-copy | decline, skip list (file indices)
   control-<machine-id>.json      each side: request seq + pause|resume|cancel (+ reason), ack of the peer's seq;
                                  receiver also: status (transferring|completed|failed), failed files, bad segments
@@ -140,8 +146,13 @@ History is kept in `<data-dir>/history.jsonl`, one JSON line per finished job. I
 ## What can be transferred
 
 - **Supported:** regular files of any type and size, folders (including empty ones), modification dates, and any file names macOS allows.
-- **Skipped:** symlinks (with a warning), special files, `.DS_Store`.
-- **Not kept:** permissions and the executable flag, owner, creation date, Finder tags, extended attributes and resource forks. Apps and other packages arrive as plain folders, so apps may not run afterwards. Hard links become separate copies.
+- **Symlinks:** a symlink inside a folder you send is recreated as a link, if its target stays inside that folder. Examples are `Current -> A` in a bundle and `../shared` in a project. An absolute target inside the folder is made relative.
+  - Links pointing outside the folder are skipped.
+  - A symlink can't be sent on its own.
+  - On the receiver, links are created only after every file of the job is in place, and each target is checked again against where the folder actually lands (after a rename as a copy, or a move).
+- **Skipped:** symlinks pointing outside the folder, special files, unreadable entries, `.DS_Store`.
+- **What didn't make it:** every job keeps a list of what was skipped or failed, with the reason, on both Macs. It's shown in Transfers ("⚠ N not transferred"), kept in history, and printed by `issues JOB`. Items that arrive fine after Resume drop off the list.
+- **Not kept:** permissions and the executable flag, owner, creation date, Finder tags, extended attributes and resource forks. Apps and other packages arrive as plain folders (with their internal links), so apps may not run afterwards. Hard links become separate copies.
 
 ### Protected macOS folders
 

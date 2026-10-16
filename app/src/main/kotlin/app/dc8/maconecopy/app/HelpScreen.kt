@@ -60,6 +60,7 @@ object Help {
                 "• Accept: files are written to the same place as on the sender. A file you already have with a different size or date is replaced; the old version is kept in the trash of mac-one-copy (Settings → trash, 14 days by default). Files that are already identical are skipped.",
                 "• Accept as copy: nothing you have is touched. Each item arrives next to the original under a new name: Report (copy).xlsx, Projects (copy), then (copy 2), (copy 3), …",
                 "• Decline: nothing is transferred and the sender is told.",
+                "Each item shows where it will go, with Accept and with Accept as copy. Change… puts it into another folder of your choice (inside your home folder, not a protected one); it keeps its name. Put everything in… moves all items at once, and Reset brings an item back to the sender's folder. The new / changed / same marks are then checked against the new place.",
             ),
         ),
         HelpSection(
@@ -80,12 +81,13 @@ object Help {
                 "• File modification dates.",
                 "• Any file names your Mac allows, including spaces and non-Latin characters.",
                 "Skipped or not kept:",
-                "• Symbolic links are skipped (shown greyed out with 🔗). Finder aliases are copied as plain files and may no longer point anywhere.",
+                "• Symbolic links inside a folder you send are recreated as links on the other Mac, if they point somewhere inside that folder (e.g. Current → A in an app bundle, or ../shared inside a project). Links pointing outside it are skipped and listed. A link can't be sent on its own; send what it points to instead. Finder aliases are copied as plain files and may no longer point anywhere.",
                 "• Special files (sockets, pipes, devices) and .DS_Store files are skipped.",
                 "• Permissions and owner, the executable flag, creation dates, Finder tags and colours, and other extended attributes and resource forks are not kept; files arrive with default permissions.",
-                "• Apps and other packages (.app, .photoslibrary, …) are copied as ordinary folders. Because their signatures and attributes are not kept, apps may not run afterwards.",
+                "• Apps and other packages (.app, .photoslibrary, …) are copied as ordinary folders, with their internal links. Because signatures, permissions and extended attributes are not kept, apps may not run afterwards.",
                 "• Hard links arrive as separate copies.",
                 "• Files outside your home folder, and the macOS-protected folders below.",
+                "Anything left out or failed is listed with its job in Transfers (⚠ … not transferred), with the reason, on both Macs. Items that arrive fine after Resume drop off the list.",
             ),
         ),
         HelpSection(

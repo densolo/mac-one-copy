@@ -33,6 +33,10 @@ object Format {
     /** A number without a trailing `.0`, e.g. MB values in settings. */
     fun plain(v: Double): String = if (v == Math.floor(v)) v.toLong().toString() else "%.3f".format(v).trimEnd('0').trimEnd('.')
 
+    /** An absolute path with the user's home shown as `~`. */
+    fun home(path: String, userHome: String = System.getProperty("user.home")): String =
+        if (path == userHome) "~" else if (path.startsWith("$userHome/")) "~" + path.removePrefix(userHome) else path
+
     fun rate(bytesPerSecond: Double) = if (bytesPerSecond < 1) "–" else "${bytes(bytesPerSecond.toLong())}/s"
 
     /** `42 s`, `3 min 5 s`, `2 h 10 min`. */
@@ -62,6 +66,8 @@ data class OfferNode(
     val status: FileStatus?,
     val counts: Map<FileStatus, Int>,
     val children: List<OfferNode>,
+    /** A symlink to be recreated; [name] then reads `name → target`. */
+    val isLink: Boolean = false,
 ) {
     val fileCount get() = counts.values.sum()
 
@@ -88,6 +94,11 @@ data class OfferNode(
                 target.files += OfferNode(f.path.substringAfterLast('/'), f.path, false, f.size, f.status, mapOf(f.status to 1), emptyList())
             }
             details.emptyDirs.forEach { dir(it) }
+            for ((path, target) in details.links) {
+                val parent = path.substringBeforeLast('/', "")
+                val d = if (parent.isEmpty()) top else dir(parent)
+                d.files += OfferNode("${path.substringAfterLast('/')} → $target", path, false, 0, null, emptyMap(), emptyList(), isLink = true)
+            }
             fun build(d: Dir): OfferNode {
                 val children = d.dirs.values.sortedBy { it.name.lowercase() }.map { build(it) } + d.files.sortedBy { it.name.lowercase() }
                 val counts = FileStatus.entries.associateWith { s -> children.sumOf { it.counts[s] ?: 0 } }.filterValues { it > 0 }
@@ -95,7 +106,7 @@ data class OfferNode(
             }
             val root = build(top)
             // Show each root at the top, collapsing the parent folders the roots live in (e.g. "Documents/").
-            return details.job.roots.mapNotNull { r -> find(root, r) }
+            return details.job.roots.mapNotNull { r -> find(root, r)?.copy(name = r) } // label roots with their full path
         }
 
         private fun find(node: OfferNode, path: String): OfferNode? {

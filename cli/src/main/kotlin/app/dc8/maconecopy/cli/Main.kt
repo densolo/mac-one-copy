@@ -129,8 +129,22 @@ class Decide : CliktCommand() {
     private val ctx by requireObject<Ctx>()
     private val job by argument(help = "job id (prefix)")
     private val decision by argument().choice("accept" to Decision.Accept, "copy" to Decision.AcceptCopy, "decline" to Decision.Decline)
+    private val into by option("--into", help = "put every item in this folder instead of the sender's (relative to home, or absolute inside it)")
+
     override fun help(context: Context) = "Accept, accept as copy, or decline an incoming offer."
-    override fun run() = inbox(ctx, InboxCommand("decide", job = job, decision = decision))
+
+    override fun run() {
+        val folders = into?.let { dir ->
+            val home = HomeDir(ctx.settings.home)
+            val rel = try {
+                if (dir.startsWith("/") || dir.startsWith("~")) expandPath(dir).let { if (it == home.root) "" else home.relativize(it) } else dir.trim('/')
+            } catch (e: PathSafetyException) {
+                throw CliktError("${e.message}")
+            }
+            mapOf("*" to rel)
+        } ?: emptyMap()
+        inbox(ctx, InboxCommand("decide", job = job, decision = decision, folders = folders))
+    }
 }
 
 class Control(private val op: String) : CliktCommand(name = op) {
@@ -164,6 +178,20 @@ class Peers : CliktCommand() {
     }
 }
 
+class Issues : CliktCommand() {
+    private val ctx by requireObject<Ctx>()
+    private val job by argument(help = "job id (prefix)")
+    override fun help(context: Context) = "List what a job left out or failed to transfer, with reasons."
+    override fun run() {
+        val running = snapshot(ctx)?.jobs.orEmpty().map { it.id to it.issues }
+        val finished = HistoryLog(ctx.paths).entries.value.map { it.jobId to it.issues }
+        val matches = (running + finished).filter { it.first.startsWith(job) }.distinctBy { it.first }
+        val (id, issues) = matches.singleOrNull() ?: throw CliktError(if (matches.isEmpty()) "no job $job" else "ambiguous job id $job")
+        if (issues.isEmpty()) return println("${id.take(8)}: nothing left out")
+        for (i in issues.sortedWith(compareBy({ it.kind }, { it.path }))) println("${i.kind.name.lowercase().padEnd(8)} ${i.path}  — ${i.message}")
+    }
+}
+
 class History : CliktCommand() {
     private val ctx by requireObject<Ctx>()
     override fun help(context: Context) = "Show finished jobs and totals per peer."
@@ -176,7 +204,8 @@ class History : CliktCommand() {
             println(
                 "${fmt.format(Date(h.startedAt))}  ${h.jobId.take(8)} $dir ${h.peerName}  ${h.outcome}  ${h.roots.joinToString()}  " +
                     "${h.filesTransferred} files, ${h.filesSkipped} skipped, ${h.filesFailed} failed, ${bytes(h.bytesTransferred)} " +
-                    "in ${h.durationMs / 1000}s (${bytes(h.avgBytesPerSecond.toLong())}/s)"
+                    "in ${h.durationMs / 1000}s (${bytes(h.avgBytesPerSecond.toLong())}/s)" +
+                    if (h.issues.isEmpty()) "" else "  ⚠ ${h.issues.size} not transferred (issues ${h.jobId.take(8)})"
             )
         }
         println("totals:")
@@ -205,7 +234,8 @@ private fun line(j: JobView): String {
     val state = j.pending?.let { "${it.name}…" } ?: (j.state.name + (j.pauseReason?.let { " ($it)" } ?: ""))
     val eta = j.etaSeconds?.let { " eta ${it}s" } ?: ""
     return "$dir ${j.peerName}  $state  ${j.roots.joinToString()}  ${(j.progress * 100).toInt()}%  " +
-        "${bytes(j.doneBytes)}/${bytes(j.totalBytes)}  ${bytes(j.bytesPerSecond.toLong())}/s$eta" + (j.currentFile?.let { "  $it" } ?: "")
+        "${bytes(j.doneBytes)}/${bytes(j.totalBytes)}  ${bytes(j.bytesPerSecond.toLong())}/s$eta" + (j.currentFile?.let { "  $it" } ?: "") +
+        if (j.issues.isEmpty()) "" else "  ⚠ ${j.issues.size} not transferred"
 }
 
 private fun bytes(n: Long): String {
@@ -221,5 +251,5 @@ private fun ago(t: Long): String {
 }
 
 fun main(args: Array<String>) = Root()
-    .subcommands(Run(), Send(), Jobs(), Decide(), Control("pause"), Control("resume"), Control("cancel"), History(), Peers())
+    .subcommands(Run(), Send(), Jobs(), Decide(), Control("pause"), Control("resume"), Control("cancel"), Issues(), History(), Peers())
     .main(args)

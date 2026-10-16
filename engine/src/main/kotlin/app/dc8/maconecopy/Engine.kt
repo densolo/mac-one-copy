@@ -104,17 +104,22 @@ class Engine(
     suspend fun send(roots: List<String>, peerId: String): SendResult {
         if (peerId == machineId) throw EngineException("cannot send to this machine")
         val content = withContext(Dispatchers.IO) { ManifestBuilder.build(home, roots) }
-        val m = Manifest(UUID.randomUUID().toString(), machineId, displayName, peerId, now(), content.roots, content.files, content.emptyDirs)
+        val m = newManifest(content, peerId)
         content.warnings.forEach { log.warn(it) }
         call { sender.create(m, peerName(peerId)) }
         return SendResult(m.jobId, content.warnings)
     }
 
-    suspend fun decide(jobId: String, decision: Decision) = call { receiver.decide(job(jobId), decision) }
+    /**
+     * Answers an incoming offer. [folders] optionally puts roots elsewhere: root → folder relative to home
+     * ("" = home itself); the root keeps its name inside it.
+     */
+    suspend fun decide(jobId: String, decision: Decision, folders: Map<String, String> = emptyMap()) =
+        call { receiver.decide(job(jobId), decision, folders) }
     suspend fun pause(jobId: String) = call { request(job(jobId), ControlRequest.Pause) }
     suspend fun resume(jobId: String) = call { request(job(jobId), ControlRequest.Resume) }
     suspend fun cancel(jobId: String) = call { request(job(jobId), ControlRequest.Cancel) }
-    suspend fun inspectOffer(jobId: String): OfferDetails = call { receiver.inspect(job(jobId)) }
+    suspend fun inspectOffer(jobId: String, folders: Map<String, String> = emptyMap()): OfferDetails = call { receiver.inspect(job(jobId), folders) }
 
     suspend fun updateSettings(transform: (Settings) -> Settings) = call {
         val next = transform(settings)
@@ -283,6 +288,20 @@ class Engine(
 
     internal fun save(rec: JobRecord) = store.save(rec)
 
+    private fun newManifest(c: app.dc8.maconecopy.job.ManifestContent, peerId: String) =
+        Manifest(UUID.randomUUID().toString(), machineId, displayName, peerId, now(), c.roots, c.files, c.emptyDirs, c.links, c.skipped)
+
+    /** Records what did not make it; one entry per path and kind, the latest reason wins. */
+    internal fun addIssue(rec: JobRecord, path: String, kind: IssueKind, message: String) {
+        rec.issues.removeAll { it.path == path && it.kind == kind }
+        if (rec.issues.size < MAX_ISSUES) rec.issues += JobIssue(path, kind, message)
+    }
+
+    /** A path that made it after all (e.g. on resume) is no longer a failure. */
+    internal fun clearFailure(rec: JobRecord, path: String) {
+        rec.issues.removeAll { it.path == path && it.kind == IssueKind.Failed }
+    }
+
     internal fun manifest(rec: JobRecord) = manifests.getValue(rec.id)
 
     internal fun entry(rec: JobRecord, index: Int): FileEntry =
@@ -382,7 +401,7 @@ class Engine(
             HistoryEntry(
                 rec.id, rec.direction, rec.peerName, rec.roots, rec.decision, filesTransferred, rec.filesSkipped, filesFailed,
                 rec.bytesTransferred, rec.startedAt, rec.endedAt, duration,
-                if (duration > 0) rec.bytesTransferred * 1000.0 / duration else 0.0, state,
+                if (duration > 0) rec.bytesTransferred * 1000.0 / duration else 0.0, state, rec.issues.toList(),
             )
         )
         save(rec)
@@ -427,7 +446,7 @@ class Engine(
         val name = _peers.value.firstOrNull { it.id == rec.peerId }?.displayName ?: rec.peerName
         return JobView(
             rec.id, rec.direction, rec.peerId, name, rec.roots, rec.state, pending, rec.pauseReason.takeIf { rec.state == JobState.Paused },
-            rec.decision, totalFiles, totalBytes, doneFiles, doneBytes, rate, eta, currentFile[rec.id], rec.createdAt,
+            rec.decision, totalFiles, totalBytes, doneFiles, doneBytes, rate, eta, currentFile[rec.id], rec.createdAt, rec.issues.toList(),
         )
     }
 
@@ -464,11 +483,11 @@ class Engine(
                         val peer = resolvePeer(cmd.peer ?: "")
                         val content = ManifestBuilder.build(home, cmd.roots)
                         content.warnings.forEach { log.warn(it) }
-                        val m = Manifest(UUID.randomUUID().toString(), machineId, displayName, peer, now(), content.roots, content.files, content.emptyDirs)
+                        val m = newManifest(content, peer)
                         sender.create(m, peerName(peer))
                         log.info("job ${m.jobId} offered to ${peerName(peer)}")
                     }
-                    "decide" -> receiver.decide(job(cmd.job!!), cmd.decision!!)
+                    "decide" -> receiver.decide(job(cmd.job!!), cmd.decision!!, cmd.folders)
                     "pause" -> request(job(cmd.job!!), ControlRequest.Pause)
                     "resume" -> request(job(cmd.job!!), ControlRequest.Resume)
                     "cancel" -> request(job(cmd.job!!), ControlRequest.Cancel)
@@ -488,6 +507,8 @@ class Engine(
     }
 }
 
+private const val MAX_ISSUES = 1000
+
 /** What the engine last published, for the CLI. */
 @Serializable
 data class Snapshot(val machineId: String, val displayName: String, val home: String, val peers: List<Peer>, val jobs: List<JobView>)
@@ -500,4 +521,6 @@ data class InboxCommand(
     val roots: List<String> = emptyList(),
     val peer: String? = null,
     val decision: Decision? = null,
+    /** For decide: root → folder relative to home to put it in; key "*" means every root. */
+    val folders: Map<String, String> = emptyMap(),
 )

@@ -27,6 +27,10 @@ data class PeerInfo(
 @Serializable
 data class FileEntry(val path: String, val size: Long, val mtime: Long)
 
+/** A symlink to recreate: [target] is relative and stays inside the root the link belongs to. */
+@Serializable
+data class LinkEntry(val path: String, val target: String)
+
 @Serializable
 data class Manifest(
     val jobId: String,
@@ -38,6 +42,9 @@ data class Manifest(
     /** Sorted by path; chunk records refer to files by their index in this list. */
     val files: List<FileEntry>,
     val emptyDirs: List<String> = emptyList(),
+    val links: List<LinkEntry> = emptyList(),
+    /** What the sender left out, with reasons, so the receiver can show it too. */
+    val skipped: List<app.dc8.maconecopy.JobIssue> = emptyList(),
 )
 
 @Serializable
