@@ -351,7 +351,7 @@
     </dependencies>
 
     <build>
-        <finalName>mac-one-copy-app</finalName>
+        <finalName>mac-one-copy-app-${project.version}</finalName>
         <plugins>
             <!-- Compose Multiplatform has no Maven plugin: hand the Compose compiler plugin to kotlinc directly. -->
             <plugin>
@@ -464,7 +464,7 @@
                                     <resources>
                                         <resource>
                                             <directory>${project.build.directory}</directory>
-                                            <includes><include>mac-one-copy-app.jar</include></includes>
+                                            <includes><include>mac-one-copy-app-${project.version}.jar</include></includes>
                                         </resource>
                                     </resources>
                                 </configuration>
@@ -485,7 +485,7 @@
                                     <appVersion>1.0.0</appVersion>
                                     <type>APP_IMAGE</type>
                                     <input>${project.build.directory}/jpackage-input</input>
-                                    <mainJar>mac-one-copy-app.jar</mainJar>
+                                    <mainJar>mac-one-copy-app-${project.version}.jar</mainJar>
                                     <mainClass>${main.class}</mainClass>
                                     <destination>${project.build.directory}/dist</destination>
                                     <removeDestination>true</removeDestination>

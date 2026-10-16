@@ -13,7 +13,7 @@ Modules: `engine` (transfer logic, no UI), `cli` (headless), `app` (Compose Desk
 This needs JDK 21 or newer. It produces:
 
 - `cli/target/mac-one-copy-cli.jar`, the CLI
-- `app/target/mac-one-copy-app.jar`, the desktop app, run with `java -jar`
+- `app/target/mac-one-copy-app-<version>.jar` (e.g. `mac-one-copy-app-0.1.0-SNAPSHOT.jar`), the desktop app, run with `java -jar`
 
 To build a real `mac-one-copy.app` with its own Java runtime in `app/target/dist/`, use the `app-image` profile:
 
@@ -48,6 +48,7 @@ Both engines see the same local folder, so this test covers the File Provider be
   - The new / changed / same marks, and what Accept skips, are then checked against the new place.
   - The folder must be inside home and not a protected folder, and two items can't end up at the same path.
 - **There is no tray icon.** Closing the window only hides it, and the app keeps receiving. Click the Dock icon to bring the window back, or Cmd+Q to quit. The Dock menu and the window title show progress, e.g. "Studio — mac-one-copy · 2 jobs · 34%".
+- **Dock name:** when the app runs from the jar or IntelliJ, macOS labels it "java" in the Dock unless the JVM gets `-Xdock:name`. Run it as `java -Xdock:name=mac-one-copy -Xdock:icon=app/src/main/resources/icon.png -jar app/target/mac-one-copy-app-<version>.jar`. The `.app` bundle and the IntelliJ run configurations already do this.
 - **Options:** `--data-dir`, `--name` and `--home`, the same as the CLI. The run configurations `app`, `app (2)` and `app (3)` start three copies on one Mac.
 - **Tests:** `ScreenshotTest` runs two real engines and renders every screen into `app/target/screenshots/`.
 

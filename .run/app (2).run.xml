@@ -3,7 +3,7 @@
     <option name="MAIN_CLASS_NAME" value="app.dc8.maconecopy.app.MainKt" />
     <module name="app" />
     <option name="PROGRAM_PARAMETERS" value="--data-dir &quot;~/Library/Application Support/mac-one-copy-2&quot; --name &quot;{host} 2&quot; --home ~/mac-one-copy-2" />
-    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED" />
+    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED -Xdock:name=&quot;mac-one-copy 2&quot; -Xdock:icon=$PROJECT_DIR$/app/src/main/resources/icon.png" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
     <shortenClasspath name="NONE" />
     <method v="2">
