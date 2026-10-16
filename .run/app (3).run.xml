@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="app (3)" type="JetRunConfigurationType">
+    <option name="MAIN_CLASS_NAME" value="app.dc8.maconecopy.app.MainKt" />
+    <module name="app" />
+    <option name="PROGRAM_PARAMETERS" value="--data-dir &quot;~/Library/Application Support/mac-one-copy-3&quot; --name &quot;{host} 3&quot; --home ~/mac-one-copy-3" />
+    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <shortenClasspath name="NONE" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

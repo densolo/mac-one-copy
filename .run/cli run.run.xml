@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="cli run" type="JetRunConfigurationType">
+    <option name="MAIN_CLASS_NAME" value="app.dc8.maconecopy.cli.MainKt" />
+    <module name="cli" />
+    <option name="PROGRAM_PARAMETERS" value="run" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <shortenClasspath name="NONE" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

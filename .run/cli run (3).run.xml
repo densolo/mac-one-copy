@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="cli run (3)" type="JetRunConfigurationType">
+    <option name="MAIN_CLASS_NAME" value="app.dc8.maconecopy.cli.MainKt" />
+    <module name="cli" />
+    <option name="PROGRAM_PARAMETERS" value="--data-dir &quot;~/Library/Application Support/mac-one-copy-3&quot; --name &quot;{host} 3&quot; --home ~/mac-one-copy-3 run" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <shortenClasspath name="NONE" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
